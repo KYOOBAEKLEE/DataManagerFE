@@ -7,8 +7,10 @@ import { JsonViewer } from '@/components/JsonViewer';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Database, Zap, Play, X, Download, MessageSquare } from 'lucide-react';
+import { Database, Zap, Play, X, Download, MessageSquare, Sparkles, Loader2 } from 'lucide-react';
 import { AgentChat, Message, JsonReference } from '@/components/AgentChat';
+import { AnalysisTable, AnalysisResult } from '@/components/AnalysisTable';
+import { AnalysisProgress, AnalysisProgressState } from '@/components/AnalysisProgress';
 
 import { cn } from '@/lib/utils';
 
@@ -40,6 +42,11 @@ export default function Home() {
     const [chatMessages, setChatMessages] = useState<Message[]>([]);
     const [isChatLoading, setIsChatLoading] = useState(false);
     const [jsonReference, setJsonReference] = useState<JsonReference | null>(null);
+
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [analysisResults, setAnalysisResults] = useState<AnalysisResult[] | null>(null);
+    const [analysisStats, setAnalysisStats] = useState<{ originalSize: number; flattenedCount: number; compressionRatio: string } | null>(null);
+    const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressState>({ stage: 'idle', message: '' });
 
     const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
@@ -228,6 +235,79 @@ export default function Home() {
         URL.revokeObjectURL(url);
     };
 
+    const handleAnalyze = async () => {
+        if (!activeTab?.result) return;
+
+        setIsAnalyzing(true);
+        setAnalysisResults(null);
+        setAnalysisStats(null);
+        setAnalysisProgress({ stage: 'flatten', message: 'Starting analysis...' });
+
+        try {
+            const response = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jsonData: activeTab.result })
+            });
+
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('Failed to get response reader');
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const { event, data } = JSON.parse(line.slice(6));
+                            
+if (event === 'progress') {
+                                setAnalysisProgress({
+                                    stage: data.stage,
+                                    message: data.message,
+                                    currentSection: data.currentSection,
+                                    currentGroup: data.currentGroup,
+                                    totalGroups: data.totalGroups,
+                                    fieldsAnalyzed: data.fieldsAnalyzed,
+                                    sections: data.sections,
+                                    stats: data.stats
+                                });
+                            } else if (event === 'complete') {
+                                setAnalysisResults(data.results);
+                                setAnalysisStats(data.stats);
+                                setAnalysisProgress({ stage: 'complete', message: 'Analysis complete!' });
+                            } else if (event === 'error') {
+                                throw new Error(data.message);
+                            }
+                        } catch (parseError) {
+                            if (parseError instanceof SyntaxError) continue;
+                            throw parseError;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Analysis error:', error);
+            setAnalysisProgress({ stage: 'error', message: error instanceof Error ? error.message : 'Analysis failed' });
+            alert(`Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
+    const handleCloseAnalysis = () => {
+        setAnalysisResults(null);
+        setAnalysisStats(null);
+    };
+
     const handleJsonSelection = (selection: { path: string; value: unknown } | null) => {
         if (selection && isChatOpen) {
             setJsonReference(selection);
@@ -378,6 +458,19 @@ export default function Home() {
                                         {!!activeTab.result && (
                                             <div className="flex items-center gap-3">
                                                 <button
+                                                    onClick={handleAnalyze}
+                                                    disabled={isAnalyzing}
+                                                    className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition-colors font-medium disabled:opacity-50"
+                                                    title="Analyze JSON Structure"
+                                                >
+                                                    {isAnalyzing ? (
+                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                    ) : (
+                                                        <Sparkles className="w-3 h-3" />
+                                                    )}
+                                                    {isAnalyzing ? 'ANALYZING...' : 'ANALYZE'}
+                                                </button>
+                                                <button
                                                     onClick={handleDownloadJson}
                                                     className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-emerald-400 transition-colors"
                                                     title="Download JSON"
@@ -422,10 +515,20 @@ export default function Home() {
                                     )}
                                 </div>
                                 <div className="flex-1 rounded-lg border border-zinc-800 bg-[#0d0d0d] overflow-hidden shadow-inner h-full">
-                                    <JsonViewer 
-                                        data={activeTab.result} 
-                                        onSelectionChange={handleJsonSelection}
-                                    />
+                                    {isAnalyzing ? (
+                                        <AnalysisProgress progress={analysisProgress} />
+                                    ) : analysisResults && analysisStats ? (
+                                        <AnalysisTable 
+                                            results={analysisResults}
+                                            stats={analysisStats}
+                                            onClose={handleCloseAnalysis}
+                                        />
+                                    ) : (
+                                        <JsonViewer 
+                                            data={activeTab.result} 
+                                            onSelectionChange={handleJsonSelection}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         </div>
