@@ -7,7 +7,8 @@ import { JsonViewer } from '@/components/JsonViewer';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Database, Zap, Play, X, Plus, Download } from 'lucide-react';
+import { Database, Zap, Play, X, Download, MessageSquare } from 'lucide-react';
+import { AgentChat, Message, JsonReference } from '@/components/AgentChat';
 
 import { cn } from '@/lib/utils';
 
@@ -34,8 +35,12 @@ export default function Home() {
     const [apis, setApis] = useState<ApiMetadata[]>([]);
     const [tabs, setTabs] = useState<TabData[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
+    
+    const [isChatOpen, setIsChatOpen] = useState(false);
+    const [chatMessages, setChatMessages] = useState<Message[]>([]);
+    const [isChatLoading, setIsChatLoading] = useState(false);
+    const [jsonReference, setJsonReference] = useState<JsonReference | null>(null);
 
-    // Derived state for the active tab
     const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
     useEffect(() => {
@@ -45,7 +50,6 @@ export default function Home() {
             .catch(err => console.error('Failed to load APIs', err));
     }, []);
 
-    // Helper: Update the active tab's data
     const updateActiveTab = (updates: Partial<TabData>) => {
         if (!activeTabId) return;
         setTabs(prev => prev.map(tab =>
@@ -70,7 +74,6 @@ export default function Home() {
         e.stopPropagation();
         setTabs(prev => {
             const newTabs = prev.filter(t => t.id !== tabId);
-            // If we closed the active tab, switch to the last one or null
             if (activeTabId === tabId) {
                 const nextTab = newTabs.length > 0 ? newTabs[newTabs.length - 1] : null;
                 setActiveTabId(nextTab ? nextTab.id : null);
@@ -79,7 +82,6 @@ export default function Home() {
         });
     };
 
-    // Helper function to filter out empty parameters
     const filterEmptyParams = (params: Record<string, unknown>): Record<string, unknown> => {
         const filtered: Record<string, unknown> = {};
         Object.entries(params).forEach(([key, value]) => {
@@ -95,12 +97,10 @@ export default function Home() {
 
         updateActiveTab({ isLoading: true });
 
-        // Prepare payload
         let processedBody = undefined;
         const processedQuery = { ...values };
         let finalEndpoint = activeTab.api.endpoint;
 
-        // Handle Path Parameters
         const pathParams = finalEndpoint.match(/{([^}]+)}/g);
         if (pathParams) {
             pathParams.forEach((param) => {
@@ -112,7 +112,6 @@ export default function Home() {
             });
         }
 
-        // Handle Body for POST/PUT
         if (activeTab.api.method !== 'GET' && values.body) {
             try {
                 if (typeof values.body === 'string') {
@@ -134,7 +133,6 @@ export default function Home() {
 
         const filteredQuery = filterEmptyParams(processedQuery);
 
-        // Construct URL for display
         const baseUrl = 'https://api.refinitiv.com';
         let displayUrl = `${baseUrl}${finalEndpoint}`;
         if (activeTab.api.method === 'GET' && Object.keys(filteredQuery).length > 0) {
@@ -146,7 +144,6 @@ export default function Home() {
             displayUrl += `?${queryString}`;
         }
 
-        // Update URL immediately
         updateActiveTab({ executedUrl: displayUrl, editableUrl: displayUrl });
 
         try {
@@ -231,9 +228,66 @@ export default function Home() {
         URL.revokeObjectURL(url);
     };
 
+    const handleJsonSelection = (selection: { path: string; value: unknown } | null) => {
+        if (selection && isChatOpen) {
+            setJsonReference(selection);
+        }
+    };
+
+    const handleSendChatMessage = async (content: string) => {
+        const userMessage: Message = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content,
+            timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, userMessage]);
+        setIsChatLoading(true);
+
+        const messagesForApi = [...chatMessages, userMessage].map(m => ({
+            role: m.role,
+            content: m.content
+        }));
+
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messages: messagesForApi,
+                    context: jsonReference?.value
+                })
+            });
+
+            const data = await response.json();
+            
+            if (data.error) {
+                throw new Error(data.error);
+            }
+
+            const assistantMessage: Message = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: data.content,
+                timestamp: new Date(),
+            };
+            setChatMessages(prev => [...prev, assistantMessage]);
+        } catch (error) {
+            console.error('Chat error:', error);
+            const errorMessage: Message = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
+                timestamp: new Date(),
+            };
+            setChatMessages(prev => [...prev, errorMessage]);
+        } finally {
+            setIsChatLoading(false);
+        }
+    };
+
     return (
         <main className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
-            {/* Sidebar: API Catalog */}
             <aside className="w-80 border-r border-zinc-800 flex flex-col p-4 bg-zinc-950 shrink-0">
                 <div className="flex items-center gap-2 mb-6 px-1">
                     <Database className="w-6 h-6 text-emerald-500" />
@@ -246,10 +300,7 @@ export default function Home() {
                 />
             </aside>
 
-            {/* Main Content */}
             <section className="flex-1 flex flex-col min-w-0 bg-zinc-950">
-                {/* Header & Tabs */}
-                {/* Tab Bar */}
                 <div className="flex items-end px-2 pt-2 gap-1 border-b border-zinc-800 bg-zinc-950">
                     <div className="flex-1 flex gap-1 overflow-x-auto no-scrollbar">
                         {tabs.map(tab => (
@@ -300,7 +351,6 @@ export default function Home() {
                 <div className="flex-1 overflow-auto bg-zinc-900/30">
                     {activeTab ? (
                         <div className="flex h-full p-6 gap-6">
-                            {/* Left Column: API Info & Parameters */}
                             <div className="w-[450px] flex flex-col gap-6 shrink-0 overflow-y-auto pr-2 custom-scrollbar">
                                 <Card className="p-5 bg-zinc-900 border-zinc-800 shadow-xl">
                                     <div className="mb-4">
@@ -312,7 +362,7 @@ export default function Home() {
                                     </div>
                                     <div className="border-t border-zinc-800 pt-4">
                                         <ParameterForm
-                                            key={activeTab.id} // Re-render form when tab changes (or technically just same API but new instance)
+                                            key={activeTab.id}
                                             parameters={activeTab.api.parameters}
                                             onSubmit={handleCallApi}
                                             isLoading={activeTab.isLoading}
@@ -321,7 +371,6 @@ export default function Home() {
                                 </Card>
                             </div>
 
-                            {/* Right Column: JSON Result */}
                             <div className="flex-1 flex flex-col min-w-0 h-full">
                                 <div className="flex flex-col gap-2 mb-2 px-1 shrink-0">
                                     <div className="flex items-center justify-between">
@@ -373,7 +422,10 @@ export default function Home() {
                                     )}
                                 </div>
                                 <div className="flex-1 rounded-lg border border-zinc-800 bg-[#0d0d0d] overflow-hidden shadow-inner h-full">
-                                    <JsonViewer data={activeTab.result} />
+                                    <JsonViewer 
+                                        data={activeTab.result} 
+                                        onSelectionChange={handleJsonSelection}
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -390,6 +442,34 @@ export default function Home() {
                     )}
                 </div>
             </section>
-        </main >
+
+            {!isChatOpen && (
+                <button
+                    onClick={() => setIsChatOpen(true)}
+                    className={cn(
+                        "fixed bottom-6 right-6 z-40",
+                        "w-14 h-14 rounded-full",
+                        "bg-emerald-600 hover:bg-emerald-500",
+                        "shadow-lg shadow-emerald-600/20",
+                        "flex items-center justify-center",
+                        "transition-all duration-200",
+                        "hover:scale-105 active:scale-95"
+                    )}
+                    title="Open Agent Chat"
+                >
+                    <MessageSquare className="w-6 h-6 text-white" />
+                </button>
+            )}
+
+            <AgentChat
+                isOpen={isChatOpen}
+                onOpenChange={setIsChatOpen}
+                messages={chatMessages}
+                onSendMessage={handleSendChatMessage}
+                isLoading={isChatLoading}
+                jsonReference={jsonReference}
+                onClearReference={() => setJsonReference(null)}
+            />
+        </main>
     );
 }
