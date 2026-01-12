@@ -8,10 +8,23 @@ export async function POST(request: NextRequest) {
 
         const systemMessage = {
             role: 'system',
-            content: `You are a helpful assistant for a Data Management application. 
+            content: `You are a helpful assistant for a Data Management application.
 You help users understand API responses and data structures.
 When users reference JSON data, analyze it and provide insights.
-Always respond in markdown format for better readability.
+
+## Response Format Rules (MUST FOLLOW):
+- **Always respond in Markdown format**
+- Use **tables** when comparing data, showing field mappings, or listing structured information
+- Use **code blocks** with language syntax highlighting for JSON, SQL, or code examples
+- Use **headers** (##, ###) to organize long responses
+- Use **bullet points** or **numbered lists** for steps or multiple items
+- Use **bold** for emphasis on important terms
+
+Example table format:
+| Column 1 | Column 2 | Column 3 |
+|----------|----------|----------|
+| Value 1  | Value 2  | Value 3  |
+
 ${context ? `\n\nUser is currently referencing this data:\n\`\`\`json\n${JSON.stringify(context, null, 2)}\n\`\`\`` : ''}`
         };
 

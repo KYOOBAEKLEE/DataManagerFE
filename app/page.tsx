@@ -7,10 +7,12 @@ import { JsonViewer } from '@/components/JsonViewer';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Database, Zap, Play, X, Download, MessageSquare, Sparkles, Loader2 } from 'lucide-react';
+import { Database, Zap, Play, X, Download, MessageSquare, Sparkles } from 'lucide-react';
 import { AgentChat, Message, JsonReference } from '@/components/AgentChat';
-import { AnalysisTable, AnalysisResult } from '@/components/AnalysisTable';
-import { AnalysisProgress, AnalysisProgressState } from '@/components/AnalysisProgress';
+import { LipperAnalyzeModal } from '@/components/LipperAnalyzeModal';
+import { AnalyzeProgress, AnalyzeProgressState } from '@/components/AnalyzeProgress';
+import { AnalyzeReport } from '@/components/AnalyzeReport';
+import { PropertyAnalysis } from '@/app/api/analyze/route';
 
 import { cn } from '@/lib/utils';
 
@@ -37,16 +39,16 @@ export default function Home() {
     const [apis, setApis] = useState<ApiMetadata[]>([]);
     const [tabs, setTabs] = useState<TabData[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
-    
+
     const [isChatOpen, setIsChatOpen] = useState(false);
     const [chatMessages, setChatMessages] = useState<Message[]>([]);
     const [isChatLoading, setIsChatLoading] = useState(false);
     const [jsonReference, setJsonReference] = useState<JsonReference | null>(null);
 
+    const [isAnalyzeModalOpen, setIsAnalyzeModalOpen] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [analysisResults, setAnalysisResults] = useState<AnalysisResult[] | null>(null);
-    const [analysisStats, setAnalysisStats] = useState<{ originalSize: number; flattenedCount: number; compressionRatio: string } | null>(null);
-    const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressState>({ stage: 'idle', message: '' });
+    const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressState>({ phase: 'idle' });
+    const [analyzeResult, setAnalyzeResult] = useState<{ analyses: PropertyAnalysis[]; fundId: string } | null>(null);
 
     const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
@@ -268,8 +270,8 @@ export default function Home() {
                     if (line.startsWith('data: ')) {
                         try {
                             const { event, data } = JSON.parse(line.slice(6));
-                            
-if (event === 'progress') {
+
+                            if (event === 'progress') {
                                 setAnalysisProgress({
                                     stage: data.stage,
                                     message: data.message,
@@ -314,6 +316,145 @@ if (event === 'progress') {
         }
     };
 
+    const handleStartAnalyze = async (id: string, datapoints: string[]) => {
+        setIsAnalyzing(true);
+        setIsAnalyzeModalOpen(false);
+        setAnalyzeProgress({ phase: 'fetching' });
+
+        try {
+            const fetchResponse = await fetch('http://localhost:3001/api/lipper-analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, datapoints })
+            });
+
+            const reader = fetchResponse.body?.getReader();
+            if (!reader) throw new Error('Failed to get response reader');
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let propertyResults: Array<{ property: string; data: unknown; error?: string }> = [];
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const { event, data } = JSON.parse(line.slice(6));
+
+                            if (event === 'progress') {
+                                setAnalyzeProgress({
+                                    phase: 'fetching',
+                                    fetchProgress: {
+                                        current: data.current,
+                                        total: data.total,
+                                        property: data.property,
+                                        status: 'fetching'
+                                    }
+                                });
+                            } else if (event === 'waiting') {
+                                setAnalyzeProgress(prev => ({
+                                    ...prev,
+                                    fetchProgress: {
+                                        ...prev.fetchProgress!,
+                                        status: 'waiting',
+                                        waitSeconds: data.seconds
+                                    }
+                                }));
+                            } else if (event === 'complete') {
+                                propertyResults = data.results;
+                            } else if (event === 'error') {
+                                throw new Error(data.message);
+                            }
+                        } catch (parseError) {
+                            if (parseError instanceof SyntaxError) continue;
+                            throw parseError;
+                        }
+                    }
+                }
+            }
+
+            setAnalyzeProgress({
+                phase: 'analyzing',
+                fetchProgress: { current: datapoints.length, total: datapoints.length, property: '', status: 'complete' }
+            });
+
+            const analyzeResponse = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ propertyResults })
+            });
+
+            const analyzeReader = analyzeResponse.body?.getReader();
+            if (!analyzeReader) throw new Error('Failed to get analyze reader');
+
+            let analyzeBuffer = '';
+            let analyses: PropertyAnalysis[] = [];
+
+            while (true) {
+                const { done, value } = await analyzeReader.read();
+                if (done) break;
+
+                analyzeBuffer += decoder.decode(value, { stream: true });
+                const lines = analyzeBuffer.split('\n\n');
+                analyzeBuffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const { event, data } = JSON.parse(line.slice(6));
+
+                            if (event === 'progress') {
+                                setAnalyzeProgress(prev => ({
+                                    ...prev,
+                                    phase: 'analyzing',
+                                    analyzeProgress: {
+                                        current: data.current,
+                                        total: data.total,
+                                        property: data.property
+                                    }
+                                }));
+                            } else if (event === 'property_analyzed') {
+                                setAnalyzeProgress(prev => ({
+                                    ...prev,
+                                    analyzeProgress: {
+                                        current: data.current,
+                                        total: data.total,
+                                        property: data.property
+                                    }
+                                }));
+                            } else if (event === 'complete') {
+                                analyses = data.analyses;
+                            } else if (event === 'error') {
+                                throw new Error(data.message);
+                            }
+                        } catch (parseError) {
+                            if (parseError instanceof SyntaxError) continue;
+                            throw parseError;
+                        }
+                    }
+                }
+            }
+
+            setAnalyzeProgress({ phase: 'complete' });
+            setAnalyzeResult({ analyses, fundId: id });
+
+        } catch (error) {
+            setAnalyzeProgress({
+                phase: 'error',
+                error: error instanceof Error ? error.message : 'Analysis failed'
+            });
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     const handleSendChatMessage = async (content: string) => {
         const userMessage: Message = {
             id: crypto.randomUUID(),
@@ -340,7 +481,7 @@ if (event === 'progress') {
             });
 
             const data = await response.json();
-            
+
             if (data.error) {
                 throw new Error(data.error);
             }
@@ -369,9 +510,19 @@ if (event === 'progress') {
     return (
         <main className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden">
             <aside className="w-80 border-r border-zinc-800 flex flex-col p-4 bg-zinc-950 shrink-0">
-                <div className="flex items-center gap-2 mb-6 px-1">
-                    <Database className="w-6 h-6 text-emerald-500" />
-                    <h1 className="text-xl font-bold tracking-tight text-white">DataManager</h1>
+                <div className="flex items-center justify-between mb-6 px-1">
+                    <div className="flex items-center gap-2">
+                        <Database className="w-6 h-6 text-emerald-500" />
+                        <h1 className="text-xl font-bold tracking-tight text-white">DataManager</h1>
+                    </div>
+                    <button
+                        onClick={() => setIsAnalyzeModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors"
+                        title="Lipper Analyze"
+                    >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Analyze
+                    </button>
                 </div>
                 <ApiCatalog
                     apis={apis}
@@ -518,14 +669,14 @@ if (event === 'progress') {
                                     {isAnalyzing ? (
                                         <AnalysisProgress progress={analysisProgress} />
                                     ) : analysisResults && analysisStats ? (
-                                        <AnalysisTable 
+                                        <AnalysisTable
                                             results={analysisResults}
                                             stats={analysisStats}
                                             onClose={handleCloseAnalysis}
                                         />
                                     ) : (
-                                        <JsonViewer 
-                                            data={activeTab.result} 
+                                        <JsonViewer
+                                            data={activeTab.result}
                                             onSelectionChange={handleJsonSelection}
                                         />
                                     )}
@@ -573,6 +724,25 @@ if (event === 'progress') {
                 jsonReference={jsonReference}
                 onClearReference={() => setJsonReference(null)}
             />
+
+            <LipperAnalyzeModal
+                isOpen={isAnalyzeModalOpen}
+                onClose={() => setIsAnalyzeModalOpen(false)}
+                onStart={handleStartAnalyze}
+                isLoading={isAnalyzing}
+            />
+
+            {isAnalyzing && analyzeProgress.phase !== 'idle' && (
+                <AnalyzeProgress progress={analyzeProgress} />
+            )}
+
+            {analyzeResult && (
+                <AnalyzeReport
+                    analyses={analyzeResult.analyses}
+                    fundId={analyzeResult.fundId}
+                    onClose={() => setAnalyzeResult(null)}
+                />
+            )}
         </main>
     );
 }

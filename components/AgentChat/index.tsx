@@ -31,7 +31,7 @@ interface AgentChatProps {
 }
 
 const MIN_WIDTH = 320;
-const MAX_WIDTH = 800;
+const MAX_WIDTH = 1400;
 const DEFAULT_WIDTH = 420;
 
 export function AgentChat({
@@ -136,7 +136,7 @@ export function AgentChat({
       )}
 
       <ScrollArea className="flex-1 overflow-hidden">
-        <div className="py-4 px-4">
+        <div className="py-4 px-6">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-[300px] text-zinc-500">
               <Bot className="w-12 h-12 text-zinc-700 mb-4" />
@@ -160,9 +160,9 @@ export function AgentChat({
                     </span>
                   </div>
                   <div className={cn(
-                    "prose prose-sm prose-invert max-w-none",
+                    "prose prose-sm prose-invert max-w-none py-2",
                     "prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1",
-                    "prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-800",
+                    "prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-800 prose-pre:overflow-x-auto",
                     "prose-code:text-emerald-400 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none",
                     message.role === 'user' && "text-zinc-300"
                   )}>
