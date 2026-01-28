@@ -7,11 +7,13 @@ import { JsonViewer } from '@/components/JsonViewer';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Database, Zap, Play, X, Download, MessageSquare, Sparkles } from 'lucide-react';
+import { Database, Zap, Play, X, Download, MessageSquare, Sparkles, Loader2 } from 'lucide-react';
 import { AgentChat, Message, JsonReference } from '@/components/AgentChat';
 import { LipperAnalyzeModal } from '@/components/LipperAnalyzeModal';
 import { AnalyzeProgress, AnalyzeProgressState } from '@/components/AnalyzeProgress';
 import { AnalyzeReport } from '@/components/AnalyzeReport';
+import { AnalysisProgress, AnalysisProgressState } from '@/components/AnalysisProgress';
+import { AnalysisTable, AnalysisResult } from '@/components/AnalysisTable';
 import { PropertyAnalysis } from '@/app/api/analyze/route';
 
 import { cn } from '@/lib/utils';
@@ -49,6 +51,10 @@ export default function Home() {
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [analyzeProgress, setAnalyzeProgress] = useState<AnalyzeProgressState>({ phase: 'idle' });
     const [analyzeResult, setAnalyzeResult] = useState<{ analyses: PropertyAnalysis[]; fundId: string } | null>(null);
+
+    const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgressState>({ stage: 'idle', message: '' });
+    const [analysisResults, setAnalysisResults] = useState<AnalysisResult[] | null>(null);
+    const [analysisStats, setAnalysisStats] = useState<{ originalSize: number; flattenedCount: number; compressionRatio: string; } | null>(null);
 
     const activeTab = tabs.find(t => t.id === activeTabId) || null;
 
